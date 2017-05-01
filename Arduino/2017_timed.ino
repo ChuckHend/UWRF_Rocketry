@@ -1,31 +1,18 @@
 /*
- *  UWRF ORCA Flight Computer
- *  Written by Adam Hendel, Trevor J Hoglund
- *  
- *  References:
- *  [1] Altimeter data sheet: http://cdn.sparkfun.com/datasheets/Sensors/Pressure/MPL3115A2.pdf
- *  [2] Altimeter commands:   https://learn.sparkfun.com/tutorials/mpl3115a2-pressure-sensor-hookup-guide
+ *  UWRF 2017 Drag System Controller
+ *  Written by Adam Hendel
  *  
  */
 
 //  Include Libraries
-    #include <SPI.h>
-    #include <SD.h>
-    #include <Servo.h>
     #include <math.h>
     #include <SparkFunMPL3115A2.h>
     MPL3115A2 altimeter;
     File dataFile;
     #include <AFMotor.h>
 
-AF_DCMotor motor(1, MOTOR12_64KHZ); // create motor #1, 64KHz pwm
-
-//TEST PROGRAM 
-//double testTime[] = {0, 600,1200,1800,2400,3000,3600,4200,4800,5400,6000,6600,7200,7800,8400,9000,9600,10200,10800,11400};
-//double testAlt[] = {0,12,50,160,250,335,415,490,560,620,675,725,770,810,845,875,900,915,925,930};     
-//int j = 0;
-//END TEST PROGRAM
-          
+AF_DCMotor motor(1); // create motor #1
+       
 //  Drag system setup
     long    prevAlt     = 0,            //  Set last loop variables
             prevAcc     = 0,
@@ -39,14 +26,19 @@ AF_DCMotor motor(1, MOTOR12_64KHZ); // create motor #1, 64KHz pwm
             openv2      = false,
             burnout     = false;        //  If engine has burned out
 
-
-    int     activeTest  = 0,            //  Currently running test
-            burnAlt     = 30,
-            burnDelay   = 4000,         //  time for motor to burnout
-            sdPin       = 10,           //  SD Card Pin
-            servoPin    = 9,            //  Servo pin
+//all time units in milliseconds
+    int     tdragOpen    = 2000,   // time for drag to fully open
+            tdragClose   = 2000,   // time for drag to fully close
+            tstayOpen    = 5000,   // time to stay open, once fully open
+            burnDelay    = 3000,   // time for engine to finish burn
+                                   // drag starts immediately after burnout           
+            burnAlt      = 50,     // change in alt. that triggers ignition timer
+                                   // lots of noise in sensor, so this is set to 30 meters
+                        
+            activeTest  = 0,            //  Currently running test
+            sdPin       = 2,           //  SD Card Pin
             sweep       = 0,
-            sweeps      = 2,            //  Amount of intitial sweeps
+            sweeps      = 1,            //  Amount of intitial sweeps
             target      = 1160;         //  Target altitude (2nd launch)
     String  filename,
             extension   = ".txt";
@@ -57,23 +49,7 @@ AF_DCMotor motor(1, MOTOR12_64KHZ); // create motor #1, 64KHz pwm
     
 void setup(){
     //setup DC motor
-    motor.setSpeed(255);     // set the speed to 200/255
-    
-    //  SD Card Setup
-    int    i = 0;
-    SD.begin(sdPin);
-    do{
-        i++;
-        filename  = "flight";
-        filename += i;
-        filename += extension;
-    }   while(SD.exists(filename));
-    dataFile = SD.open(filename, FILE_WRITE);
-    dataFile.println("Time\tChange in time\tAltitude\tVelocity\tAcceleration");
-    dataFile.println("s\ts\tm\tm/s\tm/s*s");
-    dataFile.println();
-    dataFile.close();
-    
+    motor.setSpeed(255);     // set the speed to 255 max
     
     //  Altimeter Setup
     altimeter.begin();
@@ -89,29 +65,20 @@ void setup(){
     //  Initialization sweeps
   for(sweeps;sweep<sweeps; sweep++){
        openDragSystem();
-       delay(1500);               //wait for arms to extend
        closeDragSystem();
-       delay(1500);              //wait for arms to retract
        }
 }//end setup
 
 void loop(){
-
-  
     //  Gather information
     double altitude = altimeter.readAltitude() - ground;         //  Get altitude, subtract ground alt
-    //double altitude = testAlt[j];              //for test program
-    //double currTime = testTime[j];            //for test program
-    //j++;                                      //for test program
+    Serial.print("altitude:");
+    Serial.println(altitude);
 
     unsigned long currTime = millis();                  //  Get time in ms since run began
     //  Open file
-
-    dataFile = SD.open(filename, FILE_WRITE);
     
     //  Determing velocity and acceleration
-
-    
     double   deltTime = (currTime - prevTime)/1000.00, 
            deltAlt  = altitude - prevAlt,
            currVel  = deltAlt  / deltTime,
@@ -122,74 +89,40 @@ void loop(){
            prevTime = currTime;
            prevVel  = currVel;
            prevAcc  = currAcc;
-
-           //FOR DEBUG
-//    Serial.print("Altitude: ");
-//    Serial.print(altitude);
-//    Serial.print(" deltaAlt: ");
-//    Serial.print(deltAlt);
-//    Serial.print(" deltTime: ");
-//    Serial.print(deltTime);           
-//    Serial.print(" currAlt: ");
-//    Serial.print(altitude);
-//    Serial.print(" Vel: ");
-//    Serial.print(currVel);       
-//    Serial.print(" Time: ");
-//    Serial.print(currTime);    
-//      
-    //  Log data
-                          dataFile.print(currTime);
-    dataFile.print("\t"); dataFile.print(deltTime,5);
-    dataFile.print("\t"); dataFile.print(altitude,5);
-    dataFile.print("\t"); dataFile.print(currVel,5);
-    dataFile.print("\t"); dataFile.print(currAcc,5);
-
    
     //  Check if ignition
     if(runDrag && !hasFired && (altitude > burnAlt)){ // engine fired if change in alt
         hasFired = true;
         Serial.println("FIRED");
         delayStart = millis();
-        dataFile.print("\tENGINE FIRED");
     }
     if(runDrag && hasFired && !burnout && currTime >= (delayStart + burnDelay)){  //  Burnout if time past ignition
-        burnout = true;
-        dataFile.print("\tBURNOUT");
-        openDragSystem();
-        Serial.println("burnout and openDrag");
-       Serial.println("OPEN DRAG");
-      dataFile.print("\tOPEN DRAG");
-      openDragTime = millis();      
-      openv2 = true; 
+       burnout = true;
+       openDragSystem();
+       Serial.println("burnout and openDrag");
+       openDragTime = millis();      
+       openv2 = true;
+       motor.run(RELEASE);     // tell motor to stay open
+       delay(tstayOpen);       // keep system open
+       closeDragSystem();     //now close the drag system
+       motor.run(RELEASE);     //once closed, keep it closed
     }
-    if(openv2 && runDrag && ((millis() - openDragTime) >= burnDelay)){
-      closeDragSystem();
-      dataFile.print("\tCLOSE V2");
-    }
-
-    //****END FAILSAFE****
-    
-    //  Finish loop
-    dataFile.println();
-    dataFile.close(); // Maybe just dataFile.flush();
+    else {motor.run(RELEASE);
+    Serial.println("release");} 
 }
 
 void openDragSystem(){
     motor.run(RELEASE);
     delay(100);
+    Serial.println("open");
     motor.run(FORWARD);
+    delay(tdragOpen);
 }
 
 void closeDragSystem(){
     motor.run(RELEASE);
     delay(100);
+    Serial.println("open");
     motor.run(BACKWARD);
-}
-
-bool ORCA(double velocity, double currAlt){ //returns true if drag system should close
-  double expectedApogee = currAlt+A*pow(abs(velocity-B),C);
-  Serial.print("Expected Apogee: ");
-  Serial.println(expectedApogee);
-  if(expectedApogee > target) return false;
-  else return true;
+    delay(tdragClose);
 }
