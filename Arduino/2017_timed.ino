@@ -8,7 +8,6 @@
     #include <math.h>
     #include <SparkFunMPL3115A2.h>
     MPL3115A2 altimeter;
-    File dataFile;
     #include <AFMotor.h>
 
 AF_DCMotor motor(1); // create motor #1
@@ -36,12 +35,10 @@ AF_DCMotor motor(1); // create motor #1
                                    // lots of noise in sensor, so this is set to 30 meters
                         
             activeTest  = 0,            //  Currently running test
-            sdPin       = 2,           //  SD Card Pin
             sweep       = 0,
             sweeps      = 1,            //  Amount of intitial sweeps
             target      = 1160;         //  Target altitude (2nd launch)
-    String  filename,
-            extension   = ".txt";
+
     double  ground      = 0,
             A           = 0.20,         //constants for curve fit A-D
             B           = 8.35,
